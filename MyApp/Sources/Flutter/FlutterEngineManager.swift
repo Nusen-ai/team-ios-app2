@@ -1,0 +1,251 @@
+import Flutter
+import UIKit
+
+class FlutterEngineManager {
+
+    static let shared = FlutterEngineManager()
+
+    private(set) var engine: FlutterEngine?
+    private var methodChannel: FlutterMethodChannel?
+    private var eventChannel: FlutterEventChannel?
+
+    struct Routes {
+        static let login = "/login"
+        static let shop = "/shop"
+        static let survey = "/survey"
+    }
+
+    private init() {}
+
+    @discardableResult
+    func initializeEngine() -> FlutterViewController {
+
+        if let existingEngine = engine {
+            let flutterViewController = FlutterViewController(
+                engine: existingEngine,
+                nibName: nil,
+                bundleIdentifier: nil
+            )
+            setupMethodChannel(on: flutterViewController)
+            return flutterViewController
+        }
+
+        let flutterEngine = FlutterEngine(name: "FlutterSharedComponents_App2")
+
+        if #available(iOS 13.0, *) {
+            let engineGroup = FlutterEngineGroup(
+                name: "FlutterSharedComponents",
+                options: FlutterEngineGroupOptions()
+            )
+            engine = engineGroup.makeEngine(with: flutterEngine)
+        } else {
+            engine = flutterEngine
+        }
+
+        guard let engine = engine else {
+            fatalError("Flutter引擎初始化失败")
+        }
+
+        engine.defaultRouteName = Routes.login
+        engine.run()
+
+        let flutterViewController = FlutterViewController(
+            engine: engine,
+            nibName: nil,
+            bundleIdentifier: nil
+        )
+
+        setupMethodChannel(on: flutterViewController)
+        setupEventChannel(on: flutterViewController)
+
+        NSLog("Flutter引擎初始化完成 - App 2")
+
+        return flutterViewController
+    }
+
+    private func setupMethodChannel(on viewController: FlutterViewController) {
+        guard let engine = viewController.engine else { return }
+
+        methodChannel = FlutterMethodChannel(
+            name: "com.shared.components/native_to_flutter",
+            binaryMessenger: engine.binaryMessenger
+        )
+
+        methodChannel?.setMethodCallHandler { [weak self] call, result in
+            self?.handleMethodCall(call: call, result: result)
+        }
+    }
+
+    private func setupEventChannel(on viewController: FlutterViewController) {
+        guard let engine = viewController.engine else { return }
+
+        eventChannel = FlutterEventChannel(
+            name: "com.shared.components/event_channel",
+            binaryMessenger: engine.binaryMessenger
+        )
+
+        eventChannel?.setStreamHandler(FlutterEventStreamHandler())
+    }
+
+    private func handleMethodCall(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        switch call.method {
+        case "getDeviceInfo":
+            result([
+                "platform": "iOS",
+                "version": UIDevice.current.systemVersion,
+                "model": UIDevice.current.model,
+                "name": UIDevice.current.name,
+                "app": "ios_app_2"
+            ])
+
+        case "onLoginSuccess":
+            if let args = call.arguments as? [String: Any] {
+                NotificationCenter.default.post(
+                    name: .flutterLoginSuccess,
+                    object: nil,
+                    userInfo: args
+                )
+            }
+            result(true)
+
+        case "onPageNavigation":
+            if let args = call.arguments as? [String: Any],
+               let page = args["page"] as? String {
+                NotificationCenter.default.post(
+                    name: .flutterPageNavigation,
+                    object: nil,
+                    userInfo: ["page": page]
+                )
+            }
+            result(true)
+
+        case "onScanResult":
+            if let args = call.arguments as? [String: Any],
+               let scanResult = args["scanResult"] as? String {
+                NotificationCenter.default.post(
+                    name: .flutterScanResult,
+                    object: nil,
+                    userInfo: ["result": scanResult]
+                )
+            }
+            result(true)
+
+        case "onBluetoothData":
+            if let args = call.arguments as? [String: Any] {
+                NotificationCenter.default.post(
+                    name: .flutterBluetoothData,
+                    object: nil,
+                    userInfo: args
+                )
+            }
+            result(true)
+
+        case "onError":
+            if let args = call.arguments as? [String: Any],
+               let message = args["message"] as? String {
+                NotificationCenter.default.post(
+                    name: .flutterError,
+                    object: nil,
+                    userInfo: ["message": message]
+                )
+            }
+            result(true)
+
+        case "onSurveySubmitted":
+            if let args = call.arguments as? [String: Any] {
+                NotificationCenter.default.post(
+                    name: .flutterSurveySubmitted,
+                    object: nil,
+                    userInfo: args
+                )
+            }
+            result(true)
+
+        case "onDeviceInfoReceived":
+            if let args = call.arguments as? [String: Any] {
+                NotificationCenter.default.post(
+                    name: .flutterDeviceInfoReceived,
+                    object: nil,
+                    userInfo: args
+                )
+            }
+            result(true)
+
+        default:
+            result(FlutterMethodNotImplemented)
+        }
+    }
+
+    func sendMessageToFlutter(method: String, arguments: [String: Any]? = nil) {
+        methodChannel?.invokeMethod(method, arguments: arguments)
+    }
+
+    func navigateToFlutter(
+        route: String,
+        arguments: [String: Any]? = nil,
+        from viewController: UIViewController
+    ) {
+        let flutterViewController = initializeEngine()
+
+        if let engine = flutterViewController.engine {
+            engine.setInitialRoute(route)
+
+            if let args = arguments {
+                engine.binaryMessenger.makeBackgroundUploadMessenger().send(
+                    onChannel: "com.shared.components/native_params",
+                    message: try? JSONEncoder().encode(args)
+                )
+            }
+        }
+
+        viewController.present(flutterViewController, animated: true)
+    }
+
+    func handleDeepLink(url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: true),
+              let host = components.host else {
+            return
+        }
+
+        switch host {
+        case "login":
+            NotificationCenter.default.post(name: .shouldNavigateToLogin, object: nil)
+        case "shop":
+            NotificationCenter.default.post(name: .shouldNavigateToShop, object: nil)
+        case "survey":
+            NotificationCenter.default.post(name: .shouldNavigateToSurvey, object: nil)
+        default:
+            break
+        }
+    }
+
+    func resetEngine() {
+        engine?.reset()
+        engine = nil
+        methodChannel = nil
+        eventChannel = nil
+    }
+}
+
+extension Notification.Name {
+    static let flutterLoginSuccess = Notification.Name("FlutterLoginSuccess")
+    static let flutterPageNavigation = Notification.Name("FlutterPageNavigation")
+    static let flutterScanResult = Notification.Name("FlutterScanResult")
+    static let flutterBluetoothData = Notification.Name("FlutterBluetoothData")
+    static let flutterError = Notification.Name("FlutterError")
+    static let flutterSurveySubmitted = Notification.Name("FlutterSurveySubmitted")
+    static let flutterDeviceInfoReceived = Notification.Name("FlutterDeviceInfoReceived")
+    static let shouldNavigateToLogin = Notification.Name("ShouldNavigateToLogin")
+    static let shouldNavigateToShop = Notification.Name("ShouldNavigateToShop")
+    static let shouldNavigateToSurvey = Notification.Name("ShouldNavigateToSurvey")
+}
+
+class FlutterEventStreamHandler: NSObject, FlutterStreamHandler {
+    func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
+        return nil
+    }
+
+    func onCancel(withArguments arguments: Any?) -> FlutterError? {
+        return nil
+    }
+}
