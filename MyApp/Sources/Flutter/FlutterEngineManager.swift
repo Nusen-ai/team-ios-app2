@@ -6,8 +6,10 @@ class FlutterEngineManager {
     static let shared = FlutterEngineManager()
 
     private(set) var engine: FlutterEngine?
+    private(set) var currentFlutterViewController: FlutterViewController?
     private var methodChannel: FlutterMethodChannel?
     private var eventChannel: FlutterEventChannel?
+    private var closeChannel: FlutterMethodChannel?
 
     struct Routes {
         static let login = "/login"
@@ -73,6 +75,15 @@ class FlutterEngineManager {
 
         methodChannel?.setMethodCallHandler { [weak self] call, result in
             self?.handleMethodCall(call: call, result: result)
+        }
+
+        closeChannel = FlutterMethodChannel(
+            name: "com.shared.components/close_flutter",
+            binaryMessenger: engine.binaryMessenger
+        )
+
+        closeChannel?.setMethodCallHandler { [weak self] call, result in
+            self?.handleCloseMethodCall(call: call, result: result)
         }
     }
 
@@ -186,6 +197,7 @@ class FlutterEngineManager {
         from viewController: UIViewController
     ) {
         let flutterViewController = initializeEngine()
+        currentFlutterViewController = flutterViewController
 
         if let engine = flutterViewController.engine {
             engine.setInitialRoute(route)
@@ -198,7 +210,39 @@ class FlutterEngineManager {
             }
         }
 
+        flutterViewController.modalPresentationStyle = .fullScreen
         viewController.present(flutterViewController, animated: true)
+    }
+
+    /// 关闭当前 Flutter 页面，返回到 iOS 原生页面
+    func closeFlutterPage() {
+        if let flutterVC = currentFlutterViewController {
+            flutterVC.dismiss(animated: true) { [weak self] in
+                self?.currentFlutterViewController = nil
+                NotificationCenter.default.post(name: .flutterPageClosed, object: nil)
+            }
+        }
+    }
+
+    /// 处理关闭页面的 MethodCall
+    private func handleCloseMethodCall(call: FlutterMethodCall, result: @escaping FlutterResult) {
+        switch call.method {
+        case "closeFlutterPage":
+            closeFlutterPage()
+            result(true)
+        case "onPageNavigated":
+            if let args = call.arguments as? [String: Any],
+               let page = args["page"] as? String {
+                NotificationCenter.default.post(
+                    name: .flutterPageNavigated,
+                    object: nil,
+                    userInfo: ["page": page]
+                )
+            }
+            result(true)
+        default:
+            result(FlutterMethodNotImplemented)
+        }
     }
 
     func handleDeepLink(url: URL) {
@@ -222,8 +266,10 @@ class FlutterEngineManager {
     func resetEngine() {
         engine?.reset()
         engine = nil
+        currentFlutterViewController = nil
         methodChannel = nil
         eventChannel = nil
+        closeChannel = nil
     }
 }
 
@@ -235,6 +281,8 @@ extension Notification.Name {
     static let flutterError = Notification.Name("FlutterError")
     static let flutterSurveySubmitted = Notification.Name("FlutterSurveySubmitted")
     static let flutterDeviceInfoReceived = Notification.Name("FlutterDeviceInfoReceived")
+    static let flutterPageClosed = Notification.Name("FlutterPageClosed")
+    static let flutterPageNavigated = Notification.Name("FlutterPageNavigated")
     static let shouldNavigateToLogin = Notification.Name("ShouldNavigateToLogin")
     static let shouldNavigateToShop = Notification.Name("ShouldNavigateToShop")
     static let shouldNavigateToSurvey = Notification.Name("ShouldNavigateToSurvey")
